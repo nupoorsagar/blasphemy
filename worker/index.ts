@@ -1,16 +1,16 @@
-import { chromium } from 'playwright';
+import { launchAuditBrowser } from '../lib/browser';
 import fs from 'node:fs/promises';
 import { crawlSite } from '../lib/engine/crawl';
 import { runDeterministicRules } from '../lib/engine/rules';
 import { analyzeAudit } from '../lib/ai';
 
 async function browserEvidence(urls:string[]){
-  const browser=await chromium.launch({headless:true}); const out=[];
+  const {browser, source: browserSource}=await launchAuditBrowser(); const out=[];
   try{
     for(const url of urls){
       const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1});
       try{
-        const webVitals = await page.evaluateOnNewDocument(() => {
+        const webVitals = await page.addInitScript(() => {
           (window as any).__siaVitals={lcp:0,cls:0,inp:0};
           new PerformanceObserver(list=>{ const e=list.getEntries().pop() as any; if(e) (window as any).__siaVitals.lcp=e.startTime; }).observe({type:'largest-contentful-paint',buffered:true});
           new PerformanceObserver(list=>{ for(const e of list.getEntries() as any) if(!e.hadRecentInput) (window as any).__siaVitals.cls += e.value; }).observe({type:'layout-shift',buffered:true});
@@ -29,7 +29,7 @@ async function browserEvidence(urls:string[]){
       await page.close();
     }
   } finally { await browser.close(); }
-  return out;
+  return out.map(item => ({...item, browserSource}));
 }
 
 async function main(){
