@@ -1,0 +1,47 @@
+export type Severity = 'critical'|'high'|'medium'|'low'|'info';
+export type Confidence = 'confirmed'|'likely'|'possible'|'needs_verification';
+export type Finding = {
+  id: string;
+  checkId: string;
+  category: string;
+  severity: Severity;
+  confidence: Confidence;
+  title: string;
+  pageUrl: string;
+  message: string;
+  why: string;
+  fix: string;
+  evidence?: Record<string, unknown>;
+};
+export type PageData = {
+  url: string;
+  status: number;
+  contentType: string;
+  html: string;
+  title: string;
+  description: string;
+  h1: string[];
+  headings: {level:number;text:string}[];
+  links: {href:string;text:string;external:boolean}[];
+  images: {src:string;alt:string|null;width?:number;height?:number}[];
+  scripts: string[];
+  stylesheets: string[];
+  canonical: string|null;
+  lang: string|null;
+  wordCount: number;
+  loadMs: number;
+  headers: Record<string,string>;
+  cookies: string[];
+  sourceSize: number;
+};
+export type Audit = {
+  id: string;
+  url: string;
+  domain: string;
+  status: 'queued'|'running'|'complete'|'failed';
+  createdAt: string;
+  pages: PageData[];
+  findings: Finding[];
+  aiSummary?: {summary:string; priorities:string[]; actions:string[]};
+  error?: string;
+};
