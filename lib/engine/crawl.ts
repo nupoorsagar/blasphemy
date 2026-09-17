@@ -14,7 +14,13 @@ export function classifyUrl(url:string, status:number, contentType:string):NonNu
   if(/^\/cdn-cgi\//.test(path) || /^\/_next\/(static|image)/.test(path) || /^\/wp-json(?:\/|$)/.test(path) || /^\/\.well-known\//.test(path)) return 'infrastructure';
   if(status>=300 && status<400) return 'redirect';
   if(status>=400) return 'error';
-  if(/\.(?:css|js|mjs|json|xml|txt|csv|pdf|zip|gz|webp|png|jpe?g|gif|svg|ico|avif|woff2?|ttf|eot|mp4|webm|mov|wav|mp3)(?:$|\?)/i.test(path)) return 'asset';
+  const ct = contentType.toLowerCase();
+  // Scripts, styles, data/documents and other non-page responses should not be
+  // treated as crawlable assets merely because their URL has a file extension.
+  if(/javascript|ecmascript|text\/css|application\/(json|xml)|text\/(xml|plain|csv)/i.test(ct)) return 'non_html';
+  if(/\.(?:css|js|mjs|json|xml|txt|csv)(?:$|\?)/i.test(path)) return 'non_html';
+  if(/^(?:image\/|font\/|audio\/|video\/)|application\/(?:pdf|zip|gzip|x-7z-compressed|octet-stream)/i.test(ct)) return 'asset';
+  if(/\.(?:pdf|zip|gz|webp|png|jpe?g|gif|svg|ico|avif|woff2?|ttf|eot|mp4|webm|mov|wav|mp3)(?:$|\?)/i.test(path)) return 'asset';
   if(!/text\/html|application\/(xhtml\+xml|html)/i.test(contentType)) return 'non_html';
   return 'page';
 }

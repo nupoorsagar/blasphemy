@@ -21,7 +21,7 @@ export default function Home() {
 
   return <main>
     <div className="container">
-      <nav className="nav"><div className="brand">Site Intelligence Auditor</div><div className="badge">340-rule audit engine</div></nav>
+      <nav className="nav"><div className="brand">Site Intelligence Auditor</div><div className="badge">360-check audit engine</div></nav>
       <section className="hero">
         <div className="kicker">Website intelligence, not another vanity score</div>
         <h1>Find what’s wrong. Understand why. Know what to fix.</h1>
