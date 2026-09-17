@@ -1,16 +1,26 @@
-import { Audit, Finding, PageData, Severity } from '../types';
+import { Finding, PageData, Severity } from '../types';
 import { CHECK_MAP } from './catalog';
 
 let n=0; const fid=()=>`finding_${Date.now()}_${n++}`;
 function add(out:Finding[], page:PageData, checkId:string, message:string, why:string, fix:string, evidence:Record<string,unknown>={}, severity?:Severity){ const c=CHECK_MAP.get(checkId)!; out.push({id:fid(),checkId,category:c.category,severity:severity||c.severity,confidence:'confirmed',title:c.name,pageUrl:page.url,message,why,fix,evidence}); }
 function group(values:string[]){ return values.reduce<Record<string,number>>((a,v)=>(a[v]=(a[v]||0)+1,a),{}); }
+function isNormalPage(p:PageData){ return !p.resourceKind || p.resourceKind==='page'; }
+function analyticsIdentifiers(html:string){
+  const ids = [
+    ...[...html.matchAll(/\bG-[A-Z0-9]{8,}\b/gi)].map(m=>m[0].toUpperCase()),
+    ...[...html.matchAll(/\bGTM-[A-Z0-9]{5,}\b/gi)].map(m=>m[0].toUpperCase()),
+    ...[...html.matchAll(/\bUA-\d{4,10}-\d+\b/gi)].map(m=>m[0].toUpperCase()),
+  ];
+  return [...new Set(ids)];
+}
 
 export function runDeterministicRules(pages:PageData[],robots:string):Finding[]{
   const out:Finding[]=[]; if(!pages.length) return out;
-  const urls=new Set(pages.map(p=>p.url)); const statusByUrl=new Map(pages.map(p=>[p.url,p.status]));
+  const statusByUrl=new Map(pages.map(p=>[p.url,p.status]));
   for(const p of pages){
-    if(p.status>=400&&p.status<500) add(out,p,'CRAWL-006',`This page returned HTTP ${p.status}.`,'Visitors and search crawlers can hit a dead URL.','Restore the route, redirect it to the closest valid replacement, or remove links that point here.',{status:p.status});
-    if(p.status>=500) add(out,p,'CRAWL-007',`This page returned HTTP ${p.status}.`,'Server errors prevent reliable access and indexing.','Fix the server/application error and retest the URL.',{status:p.status});
+    if(p.status>=400&&p.status<500) add(out,p,'CRAWL-006',`This URL returned HTTP ${p.status}.`,'Visitors and search crawlers can hit a dead URL.','Restore the route, redirect it to the closest valid replacement, or remove links that point here.',{status:p.status});
+    if(p.status>=500) add(out,p,'CRAWL-007',`This URL returned HTTP ${p.status}.`,'Server errors prevent reliable access and indexing.','Fix the server/application error and retest the URL.',{status:p.status});
+    if(!isNormalPage(p)) continue;
     if(!p.url.startsWith('https://')) add(out,p,'CRAWL-002','The audited URL is not HTTPS.','Modern browser features and trust signals depend on secure transport.','Serve the site over HTTPS and redirect HTTP to HTTPS.',{});
     if(p.title.length===0) add(out,p,'META-001','The page has no title element.','Search engines and browser tabs lack a clear page identity.','Add a unique, descriptive title aligned to the page purpose.');
     if(p.title.length>60) add(out,p,'META-003',`Title is ${p.title.length} characters.`,'Long titles can be truncated and become less scannable.','Rewrite the title around the main topic and important qualifier.',{length:p.title.length,title:p.title});
@@ -54,15 +64,16 @@ export function runDeterministicRules(pages:PageData[],robots:string):Finding[]{
     const schemaBlocks=[...p.html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]);
     if(schemaBlocks.length) { /* positive observation; do not emit a problem finding */ }
     for(const block of schemaBlocks){ try{ JSON.parse(block.trim()); }catch { add(out,p,'SCHEMA-003','A JSON-LD block could not be parsed as valid JSON.','Invalid structured data cannot be reliably consumed.','Validate and fix the JSON-LD syntax.'); } }
-    const analyticsIds=[...p.html.matchAll(/G-[A-Z0-9]+|UA-\d+-\d+|GTM-[A-Z0-9]+/gi)].map(m=>m[0].toUpperCase());
+    const analyticsIds=analyticsIdentifiers(p.html);
     if(analyticsIds.length===0 && !/privacy|terms|legal|docs|documentation/i.test(p.url)) add(out,p,'ANALYTICS-002','No common analytics/tag identifiers were detected.','Without analytics, it is harder to measure acquisition and conversion behavior, although some sites intentionally avoid third-party analytics.','Confirm whether analytics exists and is intentionally omitted or uses a different implementation.');
     if(analyticsIds.length) add(out,p,'ANALYTICS-001',`Analytics/tag identifiers detected: ${[...new Set(analyticsIds)].join(', ')}.`,'Measurement appears to be installed on this page.','Verify events, consent and conversion goals in the analytics platform.',{ids:[...new Set(analyticsIds)]});
     if(p.url.includes('?')||p.url.match(/%[0-9A-F]{2}/i)) add(out,p,'LINK-024','This URL contains query parameters or encoded characters.','Multiple URL representations can create duplicate crawlable addresses.','Canonicalize or redirect unnecessary parameter variants and ensure navigation uses preferred URLs.');
   }
   // Site-wide duplicate metadata/content signals
-  for(const [value,count] of Object.entries(group(pages.map(p=>p.title).filter(Boolean)))) if(count>1) add(out,pages.find(p=>p.title===value)!, 'META-005', `The title “${value}” appears on ${count} pages.`, 'Repeated titles make pages harder to distinguish in search and browser tabs.', 'Give each indexable page a unique title.', {count,value});
-  for(const [value,count] of Object.entries(group(pages.map(p=>p.description).filter(Boolean)))) if(count>1) add(out,pages.find(p=>p.description===value)!, 'META-009', `The same meta description appears on ${count} pages.`, 'Repeated descriptions provide little page-specific context.', 'Write unique descriptions for pages where a search snippet matters.', {count});
-  const h1Groups=group(pages.map(p=>p.h1[0]).filter(Boolean)); for(const [value,count] of Object.entries(h1Groups)) if(count>1) add(out,pages.find(p=>p.h1.includes(value))!,'TECH-009',`The H1 “${value}” appears on ${count} pages.`,'Repeated primary headings can indicate duplicate or weakly differentiated templates.','Differentiate page headings around the actual page purpose.',{count,value});
+  const documentPages=pages.filter(isNormalPage);
+  for(const [value,count] of Object.entries(group(documentPages.map(p=>p.title).filter(Boolean)))) if(count>1) add(out,documentPages.find(p=>p.title===value)!, 'META-005', `The title “${value}” appears on ${count} pages.`, 'Repeated titles make pages harder to distinguish in search and browser tabs.', 'Give each indexable page a unique title.', {count,value});
+  for(const [value,count] of Object.entries(group(documentPages.map(p=>p.description).filter(Boolean)))) if(count>1) add(out,documentPages.find(p=>p.description===value)!, 'META-009', `The same meta description appears on ${count} pages.`, 'Repeated descriptions provide little page-specific context.', 'Write unique descriptions for pages where a search snippet matters.', {count});
+  const h1Groups=group(documentPages.map(p=>p.h1[0]).filter(Boolean)); for(const [value,count] of Object.entries(h1Groups)) if(count>1) add(out,documentPages.find(p=>p.h1.includes(value))!,'TECH-009',`The H1 “${value}” appears on ${count} pages.`,'Repeated primary headings can indicate duplicate or weakly differentiated templates.','Differentiate page headings around the actual page purpose.',{count,value});
   return out;
 }
 

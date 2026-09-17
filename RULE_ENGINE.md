@@ -33,3 +33,23 @@ A finding should be reproducible from its evidence:
 `ai` should be used for semantic interpretation: intent, value proposition, audience clarity, content gaps, contradictions, differentiation and buyer-objection handling.
 
 The system should never let AI overwrite deterministic evidence. AI enriches the report; it does not become the source of truth for HTTP/HTML facts.
+
+## Actionable insight layer
+
+Raw findings are not the final customer-facing unit. After deterministic and browser checks run, the engine groups related observations into actionable insights with:
+
+- What
+- Why it matters
+- Fix
+- Owner(s)
+- Priority
+- Confidence
+- Scope
+- affected URLs
+- evidence and related check IDs
+
+The insight layer can correlate site/origin/template problems. For example, repeated missing security headers are presented as an origin-level configuration issue rather than one warning per page.
+
+## Performance interpretation
+
+The browser worker records lab measurements for LCP, CLS, FCP and TTFB. INP is only surfaced when a qualifying interaction is observed; otherwise the audit explicitly reports that INP was not measured. Browser metrics can be converted into actionable findings with the measured element/resource and recommended diagnostic steps.

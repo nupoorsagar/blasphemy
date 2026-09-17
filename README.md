@@ -13,6 +13,23 @@ A general-purpose website auditing SaaS focused on **actionable findings instead
 - Vercel for the web app
 - Separate worker host recommended for long browser audits
 
+
+## Actionable Insight Engine
+
+The customer-facing report is built from verified observations rather than showing every rule failure as a separate warning. The pipeline is:
+
+```text
+crawl + browser measurements → raw observations → URL classification → applicability → correlation/deduplication → actionable insights → AI interpretation → team action plans
+```
+
+Each actionable insight can include **What**, **Why it matters**, **Fix**, **Owner**, **Priority**, **Confidence**, **Scope**, affected URLs and evidence. Repeated site-wide problems are grouped where the evidence supports a shared root issue.
+
+### Performance intelligence
+
+Browser audits measure LCP, CLS, FCP and TTFB. INP is only reported when a qualifying user interaction is actually observed; otherwise the report states that INP was not measured rather than inventing a score. Browser measurements are controlled lab evidence and may differ from field/user data.
+
+Use `BROWSER_AUDIT_PAGES` to control how many crawled pages receive browser measurements.
+
 ## Repository layout
 
 ```text
