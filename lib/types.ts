@@ -92,9 +92,14 @@ export type Audit = {
   status: 'queued'|'running'|'complete'|'failed';
   createdAt: string;
   pages: PageData[];
+  robots?: string;
+  sitemapUrls?: string[];
   findings: Finding[];
   insights?: ActionableFinding[];
   browserEvidence?: BrowserEvidence[];
+  dossier?: unknown;
+  analystRun?: unknown;
+  judgeRun?: unknown;
   aiSummary?: {
     summary:string;
     priorities:string[];

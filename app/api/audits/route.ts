@@ -9,7 +9,7 @@ import { createAudit } from '@/lib/store';
 import type { Audit } from '@/lib/types';
 
 const schema=z.object({url:z.string().url()});
-export const maxDuration=60;
+export const maxDuration=180;
 
 export async function POST(req:Request){
   try{
@@ -25,8 +25,8 @@ export async function POST(req:Request){
     const browserUrls=pages.filter(p=>!p.resourceKind || p.resourceKind==='page').slice(0,Number(process.env.BROWSER_AUDIT_PAGES||8)).map(p=>p.url);
     let browserEvidence=await collectBrowserEvidence(browserUrls).catch(()=>[]);
     const insights=findingsToInsights([...findings,...browserEvidenceToFindings(browserEvidence)]);
-    const aiSummary=await analyzeAudit({url:seed.url,domain:seed.domain,pages,findings,insights,browserEvidence}).catch(()=>null);
-    const audit:Audit={...seed,status:'complete',pages,findings,insights,browserEvidence,aiSummary:aiSummary||undefined};
+    const aiSummary=await analyzeAudit({id:seed.id,url:seed.url,domain:seed.domain,pages,findings,insights,browserEvidence,robots}).catch(error=>{ console.warn('Multi-pass analysis unavailable:',error instanceof Error?error.message:error); return null; });
+    const audit:Audit={...seed,status:'complete',pages,findings,insights,browserEvidence,aiSummary:aiSummary||undefined,robots,sitemapUrls:[],dossier:(aiSummary as any)?.dossier,analystRun:(aiSummary as any)?.analystRun,judgeRun:(aiSummary as any)?.judgeRun};
     createAudit(audit);
     return NextResponse.json({id,auditId:id,summary:{raw:summarizeFindings(findings),insights:summarizeInsights(insights),browserPages:browserEvidence.length}});
   }catch(err){

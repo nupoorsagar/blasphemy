@@ -1,40 +1,109 @@
 import OpenAI from 'openai';
 import type { ActionableFinding, Audit, BrowserEvidence, Confidence, InsightArea, Priority } from './types';
+import { buildSiteDossier } from './dossier';
+import { runAnalyst, runJudge, createOpenAIAnalystAdapter } from './analyst';
+import type { AnalystCandidateInsight } from './analyst';
+import type { PageData, Finding } from './types';
 
-export async function analyzeAudit(audit: Pick<Audit,'url'|'domain'|'pages'|'findings'|'insights'|'browserEvidence'>) {
-  if (!process.env.OPENAI_API_KEY) return null;
-  const client = new OpenAI({apiKey:process.env.OPENAI_API_KEY});
-  const pageDigest = audit.pages.filter(p=>!p.resourceKind || p.resourceKind==='page').slice(0,30).map(p=>({
-    url:p.url,title:p.title,h1:p.h1.slice(0,2),words:p.wordCount,status:p.status,description:p.description.slice(0,220)
-  }));
-  const insightDigest = (audit.insights||[]).slice(0,50).map((i:ActionableFinding)=>({
-    title:i.title,areas:i.areas,severity:i.severity,priority:i.priority,confidence:i.confidence,scope:i.scope,owner:i.owner,what:i.what,why:i.why,fix:i.fix,affectedUrls:i.affectedUrls.slice(0,12),evidence:i.evidence.slice(0,8)
-  }));
-  const browserDigest = (audit.browserEvidence||[]).slice(0,20).map((b:BrowserEvidence)=>({
-    url:b.url,device:b.device,lcpMs:b.lcpMs,cls:b.cls,inpMs:b.inpMs,fcpMs:b.fcpMs,ttfbMs:b.ttfbMs,lcpElement:b.lcpElement,lcpResource:b.lcpResource,longTasks:b.longTasks,longestLongTaskMs:b.longestLongTaskMs,overflow:b.overflow,notes:b.notes
-  }));
-  const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || 'gpt-5.6-luna',
-    input: [
-      {role:'system',content:`You are a neutral website audit analyst. Convert verified audit evidence into concise, actionable insights for the website owner. Never invent facts, URLs, metrics, legal requirements, competitors, customer behaviour, or causes that are not supported by the supplied evidence. Separate observed facts from reasonable interpretation. When evidence is insufficient, use confidence "needs_verification" and say what should be checked. Do not rank departments against each other. Return JSON only.`},
-      {role:'user',content:JSON.stringify({
-        task:'Identify the most important additional cross-page SEO, marketing, content, UX and conversion issues that are supported by the supplied evidence. Produce practical recommendations in the same What / Why / Fix style as the deterministic findings. Avoid duplicating an existing insight unless adding meaningful interpretation.',
-        website:{url:audit.url,domain:audit.domain},pages:pageDigest,insights:insightDigest,browser:browserDigest,
-      })}
-    ],
-    text:{format:{type:'json_schema',name:'audit_analysis',schema:{type:'object',additionalProperties:false,properties:{
-      summary:{type:'string'},
-      priorities:{type:'array',items:{type:'string'}},
-      actions:{type:'array',items:{type:'string'}},
-      strategicInsights:{type:'array',items:{type:'object',additionalProperties:false,properties:{
-        title:{type:'string'},area:{type:'string',enum:['development','seo','marketing','content','performance','ux','accessibility','security','analytics','legal']},priority:{type:'string',enum:['immediate','this_week','this_month','this_quarter','when_convenient']},what:{type:'string'},why:{type:'string'},fix:{type:'string'},owner:{type:'array',items:{type:'string'}},confidence:{type:'string',enum:['confirmed','likely','possible','needs_verification']}
-      },required:['title','area','priority','what','why','fix','owner','confidence']}}
-    },required:['summary','priorities','actions','strategicInsights']}}}
-  });
-  return JSON.parse(response.output_text) as {
-    summary:string;
-    priorities:string[];
-    actions:string[];
-    strategicInsights:Array<{title:string;area:InsightArea;priority:Priority;what:string;why:string;fix:string;owner:string[];confidence:Confidence}>;
+export interface IntegratedAnalysis {
+  summary: string;
+  priorities: string[];
+  actions: string[];
+  strategicInsights: Array<{
+    title: string;
+    area: InsightArea;
+    priority: Priority;
+    what: string;
+    why: string;
+    fix: string;
+    owner: string[];
+    confidence: Confidence;
+    severity?: string;
+    scope?: string;
+    affectedUrls?: string[];
+    evidenceRefs?: string[];
+    sourcePass?: string;
+  }>;
+  analystRun?: unknown;
+  judgeRun?: unknown;
+}
+
+function candidateToStrategic(candidate: AnalystCandidateInsight, dossier: ReturnType<typeof buildSiteDossier>) {
+  const firstArea = candidate.areas[0] as InsightArea;
+  return {
+    title: candidate.title,
+    area: firstArea,
+    priority: candidate.priority as Priority,
+    what: candidate.what,
+    why: candidate.whyItMatters,
+    fix: candidate.fix,
+    owner: candidate.owner,
+    confidence: candidate.confidence as Confidence,
+    severity: candidate.severity,
+    scope: candidate.scope,
+    affectedUrls: candidate.affectedPageIds.map(id => dossier.crawl.pages.find(p => p.pageId === id)?.url).filter(Boolean) as string[],
+    evidenceRefs: candidate.evidenceRefs,
+    sourcePass: candidate.sourcePass,
   };
+}
+
+/**
+ * Build the Site Dossier, run all analyst passes, judge every candidate, and return
+ * only customer-facing KEEP/REWRITE insights. Legacy deterministic insights are
+ * intentionally supplied as evidence, not treated as the final AI answer.
+ */
+export async function analyzeAudit(audit: Pick<Audit,'id'|'url'|'domain'|'pages'|'findings'|'insights'|'browserEvidence'> & { robots?: string; sitemapUrls?: string[] }) {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  const dossier = buildSiteDossier({
+    auditId: audit.id || `audit_${Date.now()}`,
+    url: audit.url,
+    pages: audit.pages as PageData[],
+    robots: audit.robots || '',
+    sitemapUrls: audit.sitemapUrls,
+    discovered: audit.pages.map(p => p.url),
+    findings: audit.findings as Finding[],
+    browserEvidence: audit.browserEvidence || [],
+    toolVersion: 'blasphemy-multipass-v1',
+    maxPages: audit.pages.length,
+  });
+
+  const adapter = createOpenAIAnalystAdapter();
+  const analystRun = await runAnalyst(dossier, adapter, {
+    analystVersion: process.env.BLASPHEMY_ANALYST_VERSION || 'analyst-v1',
+  });
+  const judgeRun = await runJudge(dossier, analystRun.candidates, adapter, process.env.BLASPHEMY_JUDGE_VERSION || 'judge-v1');
+
+  const byId = new Map(analystRun.candidates.map(c => [c.candidateId, c]));
+  const strategicInsights = judgeRun.decisions
+    .filter(d => d.verdict === 'keep' || d.verdict === 'rewrite')
+    .map(d => {
+      const base = byId.get(d.candidateId);
+      if (!base) return null;
+      const merged = d.rewrittenCandidate ? { ...base, ...d.rewrittenCandidate } : base;
+      return candidateToStrategic(merged, dossier);
+    })
+    .filter(Boolean) as IntegratedAnalysis['strategicInsights'];
+
+  // A compact executive synthesis is generated from the judged set only.
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const synthesis = await client.responses.create({
+    model: process.env.OPENAI_MODEL || process.env.OPENAI_ANALYST_MODEL || 'gpt-5.6-luna',
+    input: [
+      { role: 'system', content: 'You are Blasphemy report editor. Summarize only the supplied judged website insights. Do not add new facts. Keep the language concrete and owner-oriented. Return JSON only.' },
+      { role: 'user', content: JSON.stringify({ website: { url: audit.url, domain: audit.domain }, judgedInsights: strategicInsights }) },
+    ],
+    text: { format: { type: 'json_schema', name: 'audit_executive_synthesis', schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        summary: { type: 'string' },
+        priorities: { type: 'array', items: { type: 'string' } },
+        actions: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['summary','priorities','actions'],
+    } } },
+  });
+  const executive = JSON.parse(synthesis.output_text) as { summary:string; priorities:string[]; actions:string[] };
+
+  return { ...executive, strategicInsights, analystRun, judgeRun, dossier } satisfies IntegratedAnalysis & { dossier: unknown };
 }

@@ -19,7 +19,7 @@ async function main(){
     return [];
   });
   const insights=findingsToInsights([...findings,...browserEvidenceToFindings(browserEvidence)]);
-  const aiSummary=await analyzeAudit({url,domain:new URL(url).hostname,pages,findings,insights,browserEvidence}).catch(()=>null);
+  const aiSummary=await analyzeAudit({id:auditId,url,domain:new URL(url).hostname,pages,findings,insights,browserEvidence,robots}).catch(error=>{ console.warn('Multi-pass analysis unavailable:',error instanceof Error?error.message:error); return null; });
   const result={id:auditId,url,createdAt:new Date().toISOString(),pages,findings,insights,browserEvidence,aiSummary,summary:summarizeInsights(insights)};
   const dir='data'; await fs.mkdir(dir,{recursive:true});
   const path=`${dir}/${result.id}.json`;
